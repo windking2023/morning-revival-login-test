@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Replace the placeholder with the actual UID shown in Authentication > Users.
+    // Add other approved family UIDs explicitly; do not use an open authenticated-user rule.
+    function family() {
+      return request.auth != null && request.auth.uid in ["REPLACE_WITH_YOUR_REAL_UID"];
+    }
+    match /privateContent/{docId} {
+      allow read: if family();
+      allow write: if false; // Admin publishes via trusted console/server only.
+    }
+    match /users/{userId}/notes/{noteId} {
+      allow read, delete: if family() && request.auth.uid == userId;
+      allow create, update: if family() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['text','updatedAt'])
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 20000
+        && request.resource.data.updatedAt is string;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
