@@ -1,0 +1,17 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Morning Revival · Family</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;background:#f5f1eb;color:#27221c}header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 20px;background:white;border-bottom:1px solid #ddd}button{padding:9px 15px;border:1px solid #aaa;border-radius:8px;cursor:pointer}#viewer{width:100%;height:calc(100dvh - 135px);border:0;display:none}#status{padding:10px 20px;white-space:pre-wrap}</style></head><body><header><strong>Morning Revival · 가족 전용</strong><button id="login">Google 로그인</button><button id="logout" hidden>로그아웃</button><span id="who"></span></header><div id="status">로그인해야 본문을 읽을 수 있습니다.</div><iframe id="viewer" title="Morning Revival Week 1" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe><script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {getAuth,GoogleAuthProvider,signInWithPopup,signOut,onAuthStateChanged} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import {getFirestore,doc,getDoc} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import {firebaseConfig} from './firebase-config.js';
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+const status=document.getElementById('status'),viewer=document.getElementById('viewer'),login=document.getElementById('login'),logout=document.getElementById('logout'),who=document.getElementById('who');
+login.onclick=async()=>{try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(e){status.textContent='로그인 실패: '+e.message}};
+logout.onclick=()=>signOut(auth);
+let revision=0;
+onAuthStateChanged(auth,async user=>{const r=++revision;viewer.style.display='none';viewer.removeAttribute('srcdoc');who.textContent=user?.email||'';login.hidden=!!user;logout.hidden=!user;
+if(!user){status.textContent='로그인해야 본문을 읽을 수 있습니다.';return}
+status.textContent='승인된 가족 계정인지 확인하고 본문을 불러오는 중…';
+try{const snap=await getDoc(doc(db,'privateContent','week1-html'));if(r!==revision)return;if(!snap.exists()||typeof snap.data().html!=='string')throw new Error('보호된 Week 1 본문이 아직 등록되지 않았습니다.');const storageShim = `<script>(function(){const memory=new Map();const storage={getItem:k=>memory.has(String(k))?memory.get(String(k)):null,setItem:(k,v)=>memory.set(String(k),String(v)),removeItem:k=>memory.delete(String(k)),clear:()=>memory.clear(),key:i=>Array.from(memory.keys())[i]??null,get length(){return memory.size}};try{Object.defineProperty(window,'localStorage',{configurable:true,value:storage});}catch(e){}})();<\/script>`;const protectedHtml=snap.data().html;viewer.srcdoc=protectedHtml.replace(/<head([^>]*)>/i,(_,a)=>'<head'+a+'>'+storageShim);viewer.style.display='block';status.textContent='Week 1 · 보호된 본문 읽기 (시험판: 노트·마킹은 임시 저장만 가능하며 새로고침하면 사라집니다)';}
+catch(e){if(r===revision)status.textContent=e.code==='permission-denied'?'접근 거부: 승인된 가족 계정이 아닙니다.':'본문 불러오기 실패: '+e.message}
+});
+</script></body></html>
