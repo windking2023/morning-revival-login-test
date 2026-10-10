@@ -1,0 +1,66 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Morning Revival · Family</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;background:#f5f1eb;color:#27221c}header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 20px;background:white;border-bottom:1px solid #ddd}button{padding:9px 15px;border:1px solid #aaa;border-radius:8px;cursor:pointer}#viewer{width:100%;height:calc(100dvh - 135px);border:0;display:none}#status{padding:10px 20px;white-space:pre-wrap}</style></head><body><header><strong>Morning Revival · 가족 전용</strong><button id="login">Google 로그인</button><button id="logout" hidden>로그아웃</button><span id="who"></span></header><div id="status">로그인해야 본문을 읽을 수 있습니다.</div><iframe id="viewer" title="Morning Revival Week 1" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe><script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {getAuth,GoogleAuthProvider,signInWithPopup,signOut,onAuthStateChanged} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import {getFirestore,doc,getDoc,setDoc} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import {firebaseConfig} from './firebase-config.js';
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+const status=document.getElementById('status'),viewer=document.getElementById('viewer'),login=document.getElementById('login'),logout=document.getElementById('logout'),who=document.getElementById('who');
+login.onclick=async()=>{try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(e){status.textContent='로그인 실패: '+e.message}};
+logout.onclick=()=>signOut(auth);
+let revision=0, activeUid=null, saveQueue=Promise.resolve(), pending=null, saveTimer=null;
+const storageDoc=uid=>doc(db,'users',uid,'morningRevival','week1');
+const storageState={};
+function scheduleSave(uid, data){
+  pending={uid,data}; clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{
+    const job=pending;pending=null;
+    if(!job || auth.currentUser?.uid!==job.uid)return;
+    saveQueue=saveQueue.catch(()=>{}).then(async()=>{
+      if(auth.currentUser?.uid!==job.uid)return;
+      await setDoc(storageDoc(job.uid),{items:job.data,updatedAt:new Date().toISOString()});
+      if(auth.currentUser?.uid===job.uid)status.textContent='Week 1 · 개인 노트와 마킹이 Firebase에 저장됩니다.';
+    }).catch(e=>{if(auth.currentUser?.uid===job.uid)status.textContent='저장 오류: '+e.message});
+  },450);
+}
+window.addEventListener('message',event=>{
+  if(event.source!==viewer.contentWindow || !activeUid || auth.currentUser?.uid!==activeUid)return;
+  const msg=event.data;
+  if(!msg || msg.type!=='morning-revival-storage' || typeof msg.key!=='string')return;
+  if(msg.key.length>500)return;
+  if(msg.operation==='set' && typeof msg.value==='string'){
+    if(msg.value.length>500000)return;
+    storageState[msg.key]=msg.value;
+  }else if(msg.operation==='remove')delete storageState[msg.key];
+  else if(msg.operation==='clear')for(const key of Object.keys(storageState))delete storageState[key];
+  else return;
+  scheduleSave(activeUid,{...storageState});
+});
+function makeStorageShim(initial){
+  const payload=JSON.stringify(initial).replace(/</g,'\\u003c');
+  return `<script>(function(){const memory=new Map(Object.entries(${payload}));const notify=(operation,key,value)=>parent.postMessage({type:'morning-revival-storage',operation,key,value},'*');const storage={getItem:k=>memory.has(String(k))?memory.get(String(k)):null,setItem:(k,v)=>{k=String(k);v=String(v);memory.set(k,v);notify('set',k,v)},removeItem:k=>{k=String(k);memory.delete(k);notify('remove',k)},clear:()=>{memory.clear();notify('clear','','')},key:i=>Array.from(memory.keys())[i]??null,get length(){return memory.size}};try{Object.defineProperty(window,'localStorage',{configurable:true,value:storage});}catch(e){}})();<\/script>`;
+}
+onAuthStateChanged(auth,async user=>{
+  const r=++revision;
+  activeUid=null;clearTimeout(saveTimer);pending=null;
+  viewer.style.display='none';viewer.removeAttribute('srcdoc');
+  who.textContent=user?.email||'';login.hidden=!!user;logout.hidden=!user;
+  if(!user){status.textContent='로그인해야 본문을 읽을 수 있습니다.';return}
+  status.textContent='승인된 가족 계정인지 확인하고 본문과 개인 기록을 불러오는 중…';
+  try{
+    const snap=await getDoc(doc(db,'privateContent','week1-html'));
+    if(r!==revision)return;
+    if(!snap.exists()||typeof snap.data().html!=='string')throw new Error('보호된 Week 1 본문이 아직 등록되지 않았습니다.');
+    const saved=await getDoc(storageDoc(user.uid));
+    if(r!==revision)return;
+    const initial=saved.exists()&&saved.data().items&&typeof saved.data().items==='object'?saved.data().items:{};
+    for(const key of Object.keys(storageState))delete storageState[key];
+    for(const [key,value] of Object.entries(initial))if(typeof value==='string')storageState[key]=value;
+    const storageShim=makeStorageShim(storageState);
+    const protectedHtml=snap.data().html;
+    viewer.srcdoc=/<head[^>]*>/i.test(protectedHtml)?protectedHtml.replace(/<head([^>]*)>/i,(_,a)=>'<head'+a+'>'+storageShim):storageShim+protectedHtml;
+    activeUid=user.uid;
+    viewer.style.display='block';
+    status.textContent='Week 1 · 개인 노트와 마킹이 Firebase에 저장됩니다.';
+  }catch(e){if(r===revision)status.textContent=e.code==='permission-denied'?'접근 거부: 승인된 가족 계정이 아닙니다.':'본문 또는 개인 기록 불러오기 실패: '+e.message}
+});
+</script></body></html>
