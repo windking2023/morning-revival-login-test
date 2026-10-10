@@ -18,7 +18,7 @@ function scheduleSave(uid, data){
     saveQueue=saveQueue.catch(()=>{}).then(async()=>{
       if(auth.currentUser?.uid!==job.uid)return;
       await setDoc(storageDoc(job.uid),{items:job.data,updatedAt:new Date().toISOString()});
-      if(auth.currentUser?.uid===job.uid)status.textContent='Week 1 · 개인 노트와 마킹이 Firebase에 저장됩니다.';
+      if(auth.currentUser?.uid===job.uid)status.textContent='';
     }).catch(e=>{if(auth.currentUser?.uid===job.uid)status.textContent='저장 오류: '+e.message});
   },450);
 }
